@@ -2,33 +2,46 @@ using System;
 using UnityEngine;
 
 /// <summary>
-/// 狗叫：按一下发出一次声波。这是整个游戏里唯一能主动制造声音的按键。
-/// 固定脚本：只负责"我在哪、叫多远"，不知道魔女和敌人的存在。
+/// 狗叫。没有冷却，改成肺活量：每叫一次扣一截，自己慢慢回，
+/// 不够扣就叫不出来。叫不叫、什么时候叫由玩家自己把握。
 /// </summary>
 public class DogBark : MonoBehaviour
 {
     [Header("按键")]
     public KeyCode barkKey = KeyCode.Space;
+    [Tooltip("呼唤键：波形和狗叫一样，但魔女听到会和你交换位置")]
+    public KeyCode callKey = KeyCode.F;
 
     [Header("声音")]
     [Tooltip("声波能传多远")]
-    public float radius = 7f;
-    [Tooltip("冷却时间（秒）")]
-    public float cooldown = 3.5f;
+    public float radius = 7.5f;
+
+    [Header("肺活量")]
+    [Tooltip("满的时候一共能连叫几次，由 barkCost 决定")]
+    public float staminaMax = 100f;
+    [Tooltip("叫一次消耗多少")]
+    public float barkCost = 30f;
+    [Tooltip("每秒恢复多少")]
+    public float regenPerSecond = 13f;
+
+    [Tooltip("演出解锁：关掉后按空格不会叫。默认开，正常关卡不受影响")]
+    public bool barkUnlocked = true;
+
+    [Tooltip("调试用：勾上就跳过剧情解锁，直接能用 F 交换")]
+    public bool debugUnlockSwap = false;
 
     [Header("反馈（可留空）")]
     [Tooltip("叫的时候会缩一下，留空就自动用本体的 SpriteRenderer")]
     public Transform visual;
     public float punchScale = 1.25f;
 
-    /// <summary>还能不能叫。</summary>
-    public bool CanBark => _remaining <= 0f;
-    public float Remaining => Mathf.Max(0f, _remaining);
-    public float CooldownProgress => 1f - Mathf.Clamp01(_remaining / Mathf.Max(0.01f, cooldown));
+    public float Stamina { get; private set; }
+
+    /// <summary>0~1，给脚下的圆环用。</summary>
+    public float Stamina01 => staminaMax <= 0f ? 0f : Mathf.Clamp01(Stamina / staminaMax);
 
     public event Action Barked;
 
-    private float _remaining;
     private Vector3 _baseScale;
     private float _punch;
 
@@ -36,11 +49,15 @@ public class DogBark : MonoBehaviour
     {
         if (visual == null) visual = transform;
         _baseScale = visual.localScale;
+        Stamina = staminaMax;
     }
 
     private void Update()
     {
-        if (_remaining > 0f) _remaining -= Time.deltaTime;
+        if (Stamina < staminaMax)
+        {
+            Stamina = Mathf.Min(staminaMax, Stamina + regenPerSecond * Time.deltaTime);
+        }
 
         if (_punch > 0f)
         {
@@ -49,16 +66,32 @@ public class DogBark : MonoBehaviour
         }
 
         if (GameManager.Instance != null && GameManager.Instance.State != GameManager.LevelState.Playing) return;
+        if (GameplayLock.IsPlayerLocked) return;
+        if (!barkUnlocked) return;
 
-        if (Input.GetKeyDown(barkKey) && _remaining <= 0f) Bark();
+        if (Input.GetKeyDown(barkKey)) Bark();
+        else if (Input.GetKeyDown(callKey)) Call();
     }
 
-    public void Bark()
+    /// <summary>叫一声。肺活量不够返回 false。</summary>
+    public bool Bark() => Vocal(SoundType.Bark);
+
+    /// <summary>呼唤：声音和狗叫一样，但魔女听到会和你换位置。没解锁就没有效果。</summary>
+    public bool Call()
     {
-        _remaining = cooldown;
+        if (!MagicState.SwapUnlocked && !debugUnlockSwap) return false;
+        return Vocal(SoundType.Call);
+    }
+
+    private bool Vocal(SoundType type)
+    {
+        if (Stamina < barkCost) return false;
+
+        Stamina -= barkCost;
         _punch = 1f;
 
-        SoundSystem.Ensure().Emit(transform.position, radius, this, SoundType.Bark);
+        SoundSystem.Ensure().Emit(transform.position, radius, this, type);
         Barked?.Invoke();
+        return true;
     }
 }

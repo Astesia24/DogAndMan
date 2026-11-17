@@ -1,8 +1,10 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// 关卡状态：进行中 / 成功 / 失败。所有成败都走这里，方便以后接 UI 和存档。
+/// 关卡状态：进行中 / 成功 / 失败。
+/// 第一次失败会播一段演出（黑屏 + 台词），之后每一次都只是缓慢变黑 + 红光一闪。
 /// </summary>
 public class GameManager : MonoBehaviour
 {
@@ -14,7 +16,11 @@ public class GameManager : MonoBehaviour
     public string LoseReason { get; private set; }
     public event System.Action<LevelState> StateChanged;
 
+    /// <summary>本次运行里是否已经播过第一次失败的演出。</summary>
+    public static bool FirstDeathSeen { get; private set; }
+
     private GUIStyle _style;
+    private bool _showWinText = true;
 
     public static GameManager Ensure()
     {
@@ -35,14 +41,19 @@ public class GameManager : MonoBehaviour
             Destroy(gameObject);
             return;
         }
+
         Instance = this;
+        Time.timeScale = 1f;
     }
 
-    public void Win()
+    /// <summary>通关。showText = false 用于直接切下一关，不弹"按 R 再来一次"。</summary>
+    public void Win(bool showText = true)
     {
         if (State != LevelState.Playing) return;
 
         State = LevelState.Won;
+        _showWinText = showText;
+        Time.timeScale = 0f;
         StateChanged?.Invoke(State);
     }
 
@@ -52,7 +63,34 @@ public class GameManager : MonoBehaviour
 
         State = LevelState.Lost;
         LoseReason = reason;
+        Time.timeScale = 0f;
         StateChanged?.Invoke(State);
+
+        StartCoroutine(DeathSequence());
+    }
+
+    private IEnumerator DeathSequence()
+    {
+        var overlay = ScreenOverlay.Ensure();
+        bool first = !FirstDeathSeen;
+
+        if (first)
+        {
+            FirstDeathSeen = true;
+
+            yield return overlay.FadeToBlack(0.6f);
+
+            bool done = false;
+            DialogueUI.Ensure().Play(DialogueScript.Get("death", "firstDeath"), () => done = true);
+            while (!done) yield return null;
+        }
+        else
+        {
+            yield return overlay.FadeToBlack(1.2f);
+            yield return overlay.Flash(0.35f, new Color(0.80f, 0.10f, 0.10f));
+        }
+
+        overlay.ShowCenterHint("按R回溯到开始", 1.5f);
     }
 
     private void Update()
@@ -66,7 +104,7 @@ public class GameManager : MonoBehaviour
 
     private void OnGUI()
     {
-        if (State == LevelState.Playing) return;
+        if (State != LevelState.Won || !_showWinText) return;
 
         if (_style == null)
         {
@@ -78,14 +116,9 @@ public class GameManager : MonoBehaviour
             };
         }
 
-        _style.normal.textColor = State == LevelState.Won
-            ? new Color(0.45f, 1f, 0.55f)
-            : new Color(1f, 0.45f, 0.4f);
+        _style.normal.textColor = new Color(0.45f, 1f, 0.55f);
 
-        string text = State == LevelState.Won
-            ? "她逃出来了。\n\n按 R 再来一次"
-            : $"她被抓住了。\n{LoseReason}\n\n按 R 重来";
-
-        GUI.Label(new Rect(0, Screen.height * 0.35f, Screen.width, 260), text, _style);
+        GUI.Label(new Rect(0, Screen.height * 0.35f, Screen.width, 260),
+                  "她逃出来了。\n\n按 R 再来一次", _style);
     }
 }

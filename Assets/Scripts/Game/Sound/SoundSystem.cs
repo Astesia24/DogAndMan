@@ -3,9 +3,11 @@ using UnityEngine;
 
 public enum SoundType
 {
-    Bark,      // 狗叫
-    Footstep,  // 脚步
-    Impact     // 撞击、陶罐碎裂
+    Bark,      // 狗叫（魔女和守卫都听）
+    Footstep,  // 脚步（只有守卫听）
+    Impact,    // 撞击、陶罐碎裂（魔女和守卫都听）
+    Bell,      // 钟声（只有守卫听）
+    Call       // 狗按 F 的呼唤：波形一样，但只有魔女有反应——她会和狗交换位置
 }
 
 /// <summary>能被声音波及的东西（魔女、敌人）。</summary>
@@ -30,7 +32,7 @@ public class SoundSystem : MonoBehaviour
 
     [Header("声波表现")]
     [Tooltip("声波扩散速度（米/秒）")]
-    public float waveSpeed = 14f;
+    public float waveSpeed = 15f;
     [Tooltip("射线数量，越大形状越精确，64 够用")]
     [Range(16, 128)] public int segments = 64;
     public float lineWidth = 0.07f;

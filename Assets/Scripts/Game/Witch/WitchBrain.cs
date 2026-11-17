@@ -20,11 +20,9 @@ public class WitchBrain : MonoBehaviour, ISoundListener, IAgentStatus
 
     public float LastHeardTime { get; private set; } = -999f;
 
-    // ── ISoundListener ──────────────────────────────────────────────
     public Vector2 SoundPosition => transform.position;
     public bool CanHear => true;
 
-    // ── IAgentStatus ────────────────────────────────────────────────
     public string StatusText
     {
         get
@@ -72,7 +70,6 @@ public class WitchBrain : MonoBehaviour, ISoundListener, IAgentStatus
         for (int i = 0; i < _abilities.Count; i++) _abilities[i].Tick(dt);
     }
 
-    // ── 声音入口 ────────────────────────────────────────────────────
     public void OnSoundHeard(Vector2 source, SoundType type)
     {
         LastHeardTime = Time.time;
@@ -92,7 +89,6 @@ public class WitchBrain : MonoBehaviour, ISoundListener, IAgentStatus
         }
     }
 
-    // ── 移动 ────────────────────────────────────────────────────────
     public void SetDestination(Vector2 p)
     {
         if (motor != null) motor.MoveTo(p);
@@ -105,7 +101,6 @@ public class WitchBrain : MonoBehaviour, ISoundListener, IAgentStatus
 
     public bool HasDestination => motor != null && motor.HasDestination;
 
-    // ── 给未来的攻击魔法用 ──────────────────────────────────────────
     public List<EnemyBase> GetMarkedEnemies()
     {
         var list = new List<EnemyBase>();

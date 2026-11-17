@@ -1,0 +1,7 @@
+# 全局 · 第一次失败
+
+@firstDeath
+我|不...不要...|second|left|fade
+我|！！！！||||flashRW
+我|这是，那个人给我的魔法？难道是因为变了身的原因....这个魔法没有被减弱？|second|left|instant
+@end

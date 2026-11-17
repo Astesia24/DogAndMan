@@ -10,8 +10,8 @@ public class BreakableJar : MonoBehaviour
     [Tooltip("撞击速度低于这个值不会碎（防止轻轻蹭一下就炸）")]
     public float breakSpeed = 1.4f;
 
-    [Tooltip("碎裂声能传多远（比狗叫更远，是专门用来引人的）")]
-    public float noiseRadius = 9f;
+    [Tooltip("碎裂声能传多远")]
+    public float noiseRadius = 10f;
 
     [Tooltip("碎裂特效（可留空）")]
     public GameObject breakEffect;

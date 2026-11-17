@@ -1,13 +1,13 @@
 using UnityEngine;
 
 /// <summary>
-/// 草丛：魔女走进去就隐身，敌人看不见她（除非敌人勾了 canSeeConcealed）。
-/// 挂在带 IsTrigger 的 Collider2D 上。
+/// 床：魔女可以钻到床底下躲着，敌人看不见她。
+/// 挂在带 IsTrigger 的 Collider2D 上，**不要放在 Wall 层**（否则会挡声音）。
 /// </summary>
 [RequireComponent(typeof(Collider2D))]
-public class Bush : MonoBehaviour
+public class Bed : MonoBehaviour
 {
-    [Tooltip("躲进去以后魔女的不透明度")]
+    [Tooltip("钻进去以后魔女的不透明度")]
     [Range(0.15f, 1f)] public float hiddenAlpha = 0.45f;
 
     private void Reset()

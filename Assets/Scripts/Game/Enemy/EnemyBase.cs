@@ -3,44 +3,49 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// 所有敌人的基类。提供：听见声音、看见目标、巡逻/调查/追击/搜索/回岗的状态机。
+/// 所有敌人的基类：听觉、视觉、巡逻/调查/追击/搜索/回岗的状态机，
+/// 以及网格 A* 寻路（追、找、回岗都会绕墙）。
 /// 第一关的守卫只是"巡逻 + 去看声音"，不会攻击狗。
-/// 以后要做"会咬狗的""会喊人的""会设陷阱的"，都继承它，只重写需要的虚方法。
 /// </summary>
 [RequireComponent(typeof(Rigidbody2D))]
 public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
 {
     public enum State
     {
-        Patrol,      // 巡逻
-        Investigate, // 听到声音，去查看
-        Chase,       // 看见了，追
-        Search,      // 跟丢了，去最后看到的位置找
-        Return       // 回岗
+        Patrol,
+        Investigate,
+        Chase,
+        Search,
+        Return
     }
 
     public static readonly List<EnemyBase> All = new List<EnemyBase>();
 
     [Header("移动")]
-    public float moveSpeed = 2f;
+    public float moveSpeed = 2.6f;
+
+    [Tooltip("每秒最多转多少度。调很大就是瞬间转向")]
+    public float turnSpeed = 400f;
 
     [Header("感知")]
-    public float visionRange = 5f;
+    public float visionRange = 5.6f;
     [Range(0f, 360f)] public float visionAngle = 80f;
-    [Tooltip("视线被这些层挡住（留空自动用 Wall）")]
+    [Tooltip("视线和寻路都被这些层挡住（留空自动用 Wall 层）")]
     public LayerMask obstacleMask;
-    [Tooltip("能不能看见躲在草丛里的目标（第一关的守卫：不能）")]
+    [Tooltip("能不能看见钻到床底下的目标（第一关：不能）")]
     public bool canSeeConcealed = false;
 
     [Header("状态时长")]
-    [Tooltip("走到声音位置后，原地看多久")]
     public float investigatePause = 2.5f;
-    [Tooltip("追丢后，在最后位置找多久")]
     public float searchPause = 3f;
 
     [Header("抓捕")]
     [Tooltip("靠多近算抓住（只在追/找/查看状态下生效）")]
-    public float catchRadius = 0.7f;
+    public float catchRadius = 0.65f;
+
+    [Header("寻路")]
+    [Tooltip("留空会自动在场景里找；找不到就退化成直线走")]
+    public LevelGrid grid;
 
     [Header("引用")]
     public Transform witch;
@@ -48,13 +53,23 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
 
     public State CurrentState { get; private set; } = State.Patrol;
     public event Action<State> StateChanged;
-
     public float LastHeardTime { get; private set; } = -999f;
 
     public Vector2 SoundPosition => transform.position;
     public bool CanHear => true;
 
-    // ── IAgentStatus ────────────────────────────────────────────────
+    /// <summary>当前朝向（给视野锥用）。</summary>
+    public Vector2 Facing => _facing;
+
+    /// <summary>直接设定朝向，通常用于登场时先看向某个方向。</summary>
+    public void FaceDirection(Vector2 dir)
+    {
+        if (dir.sqrMagnitude < 0.0001f) return;
+
+        _facing = dir.normalized;
+        _desiredFacing = _facing;
+    }
+
     public string StatusText
     {
         get
@@ -86,31 +101,66 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
     }
 
     private Vector2 _facing = Vector2.right;
+    private Vector2 _desiredFacing = Vector2.right;
     private Vector2 _lookAt;
+    private Vector2 _returnTo;
+    private bool _hasReturnTo;
     private float _stateTimer;
     private bool _arrived;
     private float _markedUntil;
     private WitchBrain _witchBrain;
+
+    // 寻路
+    private List<Vector2> _path;
+    private int _pathIndex;
+    private float _repathTimer;
+    private Vector2 _lastPos;
+    private float _stuck;
 
     public bool IsMarked => Time.time < _markedUntil;
 
     protected virtual void Awake()
     {
         if (rb == null) rb = GetComponent<Rigidbody2D>();
-        if (obstacleMask.value == 0) obstacleMask = LayerMask.GetMask("Wall");
+        if (obstacleMask.value == 0) obstacleMask = DefaultVisionMask();
+
+        // 旧预制体上的遮挡层可能只有墙，这里补上狗洞
+        int holeLayer = LayerMask.NameToLayer("DogHole");
+        if (holeLayer >= 0) obstacleMask = obstacleMask.value | (1 << holeLayer);
         if (obstacleMask.value == 0)
         {
             Debug.LogWarning($"[{name}] 没有设置遮挡层，也没有 Wall 层，敌人会隔墙看见人", this);
         }
 
+        if (grid == null) grid = FindObjectOfType<LevelGrid>();
+        if (grid != null && !grid.Ready) grid.Bake();   // Awake 顺序不保证，谁先到谁烘
+
         ResolveWitch();
+        _lastPos = rb.position;
         if (!All.Contains(this)) All.Add(this);
+    }
+
+    protected virtual void OnEnable()
+    {
+        // 关键：不加这一句，守卫永远听不见狗叫
+        if (!SoundSystem.Listeners.Contains(this)) SoundSystem.Listeners.Add(this);
     }
 
     protected virtual void OnDisable()
     {
+        SoundSystem.Listeners.Remove(this);
         All.Remove(this);
         if (rb != null) rb.velocity = Vector2.zero;
+    }
+
+    /// <summary>视线会被墙和狗洞挡住（声音不会，声音只被墙挡）。</summary>
+    private static LayerMask DefaultVisionMask()
+    {
+        int mask = 1 << LayerMask.NameToLayer("Wall");
+        int hole = LayerMask.NameToLayer("DogHole");
+        if (hole >= 0) mask |= 1 << hole;
+
+        return mask;
     }
 
     private void ResolveWitch()
@@ -129,7 +179,16 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
             return;
         }
 
+        // 对话 / 演出期间敌人也停住
+        if (GameplayLock.IsLocked)
+        {
+            Stop();
+            return;
+        }
+
         if (witch == null) ResolveWitch();
+
+        _facing = RotateTowards(_facing, _desiredFacing, turnSpeed * Time.fixedDeltaTime);
 
         _stateTimer += Time.fixedDeltaTime;
 
@@ -139,6 +198,8 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
             _lookAt = witch.position;
             if (CurrentState != State.Chase && CurrentState != State.Investigate) SetState(State.Chase);
         }
+
+        if (_stuck > 1.8f) { _stuck = 0f; SetState(State.Return); }
 
         switch (CurrentState)
         {
@@ -167,7 +228,6 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
         CheckCatch();
     }
 
-    // ── 状态 ────────────────────────────────────────────────────────
     protected void SetState(State next)
     {
         if (CurrentState == next) return;
@@ -175,6 +235,8 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
         CurrentState = next;
         _stateTimer = 0f;
         _arrived = false;
+        _path = null;
+        _repathTimer = 0f;
         OnStateEntered(next);
         StateChanged?.Invoke(next);
     }
@@ -233,49 +295,110 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
         }
 
         Stop();
-        if (_stateTimer >= searchPause)
-        {
-            SetState(State.Return);
-        }
+        if (_stateTimer >= searchPause) SetState(State.Return);
     }
 
     private void TickReturn()
     {
-        if (MoveTowards(PostPosition)) SetState(State.Patrol);
+        Vector2 target = _hasReturnTo ? _returnTo : PostPosition;
+
+        if (MoveTowards(target))
+        {
+            _hasReturnTo = false;
+            SetState(State.Patrol);
+        }
     }
 
-    // ── 巡逻（子类实现）────────────────────────────────────────────
-    /// <summary>巡逻时每帧调用。</summary>
     protected virtual void TickPatrol() { Stop(); }
 
-    /// <summary>回岗要回到哪里。</summary>
     protected virtual Vector2 PostPosition => transform.position;
 
-    // ── 移动 ────────────────────────────────────────────────────────
-    /// <summary>朝目标走，到了返回 true。</summary>
     protected bool MoveTowards(Vector2 target)
     {
-        if (rb == null) return true;
+        Vector2 pos = rb == null ? (Vector2)transform.position : rb.position;
 
-        Vector2 delta = target - rb.position;
-        if (delta.magnitude <= 0.12f)
+        if (Vector2.Distance(pos, target) <= 0.12f)
         {
             Stop();
+            _path = null;
             return true;
         }
 
-        Vector2 dir = delta.normalized;
+        // 卡住检测：真的推不动才累加
+        float moved = Vector2.Distance(pos, _lastPos);
+        if (moved < moveSpeed * Time.fixedDeltaTime * 0.3f) _stuck += Time.fixedDeltaTime;
+        else _stuck = Mathf.Max(0f, _stuck - Time.fixedDeltaTime * 2f);
+        _lastPos = pos;
+
+        // 每 0.45 秒重新规划一次（追移动目标时不会踩空）
+        _repathTimer -= Time.fixedDeltaTime;
+        if (_path == null || _repathTimer <= 0f)
+        {
+            _path = grid != null ? Pathfinder.Find(grid, pos, target) : null;
+
+            // 没有网格才退化成直线；有网格但走不到就原地等，别撞墙
+            if (_path == null && grid == null) _path = new List<Vector2> { target };
+
+            if (_path == null)
+            {
+                Stop();
+                _stuck += Time.fixedDeltaTime;
+                return false;
+            }
+
+            _pathIndex = 0;
+            _repathTimer = 0.45f;
+        }
+
+        // 跳过走过的路点，但最后一个不跳（会跟到达判定打架）
+        while (_pathIndex < _path.Count - 1 &&
+               Vector2.Distance(pos, _path[_pathIndex]) < 0.2f)
+        {
+            _pathIndex++;
+        }
+
+        Vector2 wp = _path[_pathIndex];
+        Vector2 delta = wp - pos;
+        float d = delta.magnitude;
+
+        if (d < 0.05f)
+        {
+            _path = null;
+            _repathTimer = 0f;
+            Stop();
+            _stuck += Time.fixedDeltaTime;
+            return false;
+        }
+
+        Vector2 dir = delta / d;
         rb.velocity = dir * moveSpeed;
-        _facing = dir;
+        _desiredFacing = dir;
+
         return false;
+    }
+
+    /// <summary>朝目标方向转最多 maxDegrees，避免朝向瞬间翻转。</summary>
+    private static Vector2 RotateTowards(Vector2 from, Vector2 to, float maxDegrees)
+    {
+        float angle = Vector2.SignedAngle(from, to);
+        if (Mathf.Abs(angle) <= maxDegrees) return to;
+
+        float rad = Mathf.Sign(angle) * maxDegrees * Mathf.Deg2Rad;
+        float c = Mathf.Cos(rad);
+        float s = Mathf.Sin(rad);
+
+        return new Vector2(from.x * c - from.y * s, from.x * s + from.y * c);
     }
 
     protected void Stop()
     {
-        if (rb != null) rb.velocity = Vector2.zero;
+        if (rb != null)
+        {
+            rb.velocity = Vector2.zero;
+            _lastPos = rb.position;
+        }
     }
 
-    // ── 感知 ────────────────────────────────────────────────────────
     public bool CanSeeWitch()
     {
         if (witch == null) return false;
@@ -290,7 +413,6 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
         if (dist > visionRange) return false;
         if (dist > 0.001f && Vector2.Angle(_facing, to) > visionAngle * 0.5f) return false;
 
-        // 视线被墙挡住
         if (Physics2D.Linecast(pos, witch.position, obstacleMask)) return false;
 
         return true;
@@ -298,13 +420,42 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
 
     public virtual void OnSoundHeard(Vector2 source, SoundType type)
     {
+        // 狗叫和呼唤都没法把他从半路上再勾走；钟声和陶罐可以
+        bool barkLike = type == SoundType.Bark || type == SoundType.Call;
+
+        if (barkLike &&
+            (CurrentState == State.Investigate || CurrentState == State.Search || CurrentState == State.Return))
+        {
+            return;
+        }
+
         LastHeardTime = Time.time;
-        Mark(5f);
 
         if (CurrentState == State.Chase) return;
 
+        // 听得到但过不去（比如声音来自狗洞后面的死胡同），不白跑
+        if (!CanReach(source)) return;
+
+        // 记住被勾走前站的位置，之后要回到这里才算恢复
+        _returnTo = rb.position;
+        _hasReturnTo = true;
+
+        Mark(5f);
         _lookAt = source;
         SetState(State.Investigate);
+    }
+
+    /// <summary>
+    /// 声音来源能不能走到。
+    /// 只看 A* 有没有路——不再要求“声源那一格必须可走”。
+    /// 狗贴着狗洞、墙边叫的时候，脚下那格会被网格标成阻挡，
+    /// 以前就会被判成“过不去”而静默忽略；现在交给 A* 判断（它会自动吸附到最近的可走格）。
+    /// </summary>
+    private bool CanReach(Vector2 target)
+    {
+        if (grid == null) return true;
+
+        return Pathfinder.Find(grid, rb.position, target) != null;
     }
 
     public void Mark(float duration)

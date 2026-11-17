@@ -8,9 +8,9 @@ using UnityEngine.UI;
 public class AgentStatusView : MonoBehaviour
 {
     [Tooltip("文字浮在多高")]
-    public float height = 1.05f;
-    public int fontSize = 44;
-    public float worldScale = 0.0045f;
+    public float height = 1.0f;
+    public int fontSize = 64;
+    public float worldScale = 0.006f;
     [Tooltip("被声音波及时弹大的幅度")]
     public float pulseAmount = 0.4f;
 
@@ -53,6 +53,11 @@ public class AgentStatusView : MonoBehaviour
         _text.verticalOverflow = VerticalWrapMode.Overflow;
         _text.raycastTarget = false;
         _text.color = Color.white;
+
+        // 描边，深色背景上更清楚
+        var outline = textGo.AddComponent<Outline>();
+        outline.effectColor = new Color(0f, 0f, 0f, 0.9f);
+        outline.effectDistance = new Vector2(2f, -2f);
 
         var trt = textGo.GetComponent<RectTransform>();
         if (trt != null)

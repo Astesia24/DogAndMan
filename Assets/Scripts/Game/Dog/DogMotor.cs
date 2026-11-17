@@ -7,7 +7,7 @@ using UnityEngine;
 [RequireComponent(typeof(Rigidbody2D))]
 public class DogMotor : MonoBehaviour
 {
-    public float speed = 4.5f;
+    public float speed = 4.8f;
     public Rigidbody2D rb;
 
     [Tooltip("勾上后狗会转向移动方向（以后接动画用）")]
@@ -23,6 +23,13 @@ public class DogMotor : MonoBehaviour
 
     private void Update()
     {
+        // 对话 / 演出期间不接受移动输入（只锁玩家时也生效）
+        if (GameplayLock.IsPlayerLocked)
+        {
+            InputDirection = Vector2.zero;
+            return;
+        }
+
         InputDirection = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
     }
 
