@@ -211,6 +211,64 @@ public static class LevelEditorTools
         Select(go);
     }
 
+    [MenuItem("Tools/关卡编辑器/放火枪手", false, 35)]
+    public static void PlaceMarksman()
+    {
+        string prefabPath = "Assets/Scripts/Game/Prefabs/P_Marksman.prefab";
+
+        if (AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) == null)
+        {
+            Debug.LogWarning("[关卡编辑器] 还没有 P_Marksman 预制体。先点 Tools/关卡编辑器/生成火枪手预制体");
+            return;
+        }
+
+        var go = SpawnPrefab("P_Marksman", "Marksman", SceneCenter(), RootOrNull());
+        Select(go);
+
+        Debug.Log("[关卡编辑器] 放了火枪手。没有巡逻点时就站在原地瞄准；" +
+                  "看见魔女后红枪线会跟着她，视野锥收缩到 0 就开枪。");
+    }
+
+    [MenuItem("Tools/关卡编辑器/生成火枪手预制体", false, 36)]
+    public static void CreateMarksmanPrefab()
+    {
+        const string sourcePath = "Assets/Scripts/Game/Prefabs/P_Guard.prefab";
+        const string targetPath = "Assets/Scripts/Game/Prefabs/P_Marksman.prefab";
+
+        var guardPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(sourcePath);
+        if (guardPrefab == null)
+        {
+            Debug.LogError($"[关卡编辑器] 找不到 {sourcePath}");
+            return;
+        }
+
+        // 用普通克隆（不是预制体实例），这样能自由增删组件
+        var temp = (GameObject)Object.Instantiate(guardPrefab);
+
+        try
+        {
+            temp.name = "P_Marksman";
+
+            var old = temp.GetComponent<EnemyGuard>();
+            if (old != null) Object.DestroyImmediate(old, true);
+
+            if (temp.GetComponent<EnemyMarksman>() == null)
+            {
+                temp.AddComponent<EnemyMarksman>();
+            }
+
+            PrefabUtility.SaveAsPrefabAsset(temp, targetPath);
+            AssetDatabase.Refresh();
+
+            Select(AssetDatabase.LoadAssetAtPath<GameObject>(targetPath));
+            Debug.Log($"[关卡编辑器] 已生成 {targetPath}（从 P_Guard 复制，替换为火枪手脚本）");
+        }
+        finally
+        {
+            Object.DestroyImmediate(temp);
+        }
+    }
+
     [MenuItem("Tools/关卡编辑器/放床", false, 33)]
     public static void PlaceBed()
     {

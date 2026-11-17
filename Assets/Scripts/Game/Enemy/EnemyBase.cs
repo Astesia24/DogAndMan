@@ -267,6 +267,12 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
 
     private void TickChase(bool sees)
     {
+        TickChaseCore(sees);
+    }
+
+    /// <summary>追击/远距离瞄准的行为。子类可以覆盖（火枪手就是这么做的）。</summary>
+    protected virtual void TickChaseCore(bool sees)
+    {
         if (!sees)
         {
             SetState(State.Search);
@@ -401,6 +407,15 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
 
     public bool CanSeeWitch()
     {
+        return CanSeeWithRange(visionRange);
+    }
+
+    /// <summary>
+    /// 用指定视野半径判断能不能看见魔女（角度、遮挡、藏身都照常生效）。
+    /// 火枪手瞄准时视野会收缩，但判定要用"瞄准刚开始时的视野"。
+    /// </summary>
+    protected bool CanSeeWithRange(float range)
+    {
         if (witch == null) return false;
 
         var conceal = witch.GetComponent<WitchConcealment>();
@@ -410,7 +425,7 @@ public abstract class EnemyBase : MonoBehaviour, ISoundListener, IAgentStatus
         Vector2 to = (Vector2)witch.position - pos;
         float dist = to.magnitude;
 
-        if (dist > visionRange) return false;
+        if (dist > range) return false;
         if (dist > 0.001f && Vector2.Angle(_facing, to) > visionAngle * 0.5f) return false;
 
         if (Physics2D.Linecast(pos, witch.position, obstacleMask)) return false;
